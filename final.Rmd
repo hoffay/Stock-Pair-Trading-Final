@@ -1,0 +1,324 @@
+```{r}
+library(readr)
+library(dplyr)
+```
+
+#Intro
+This project's goal is to find stocks that are positively correlated and then package the pairs together and make trades based on the movements of their pairs.
+
+#Setup Code
+This chunk gets a list of all the stock files in a folder that are csvs and finds the correlation between the x stocks selected and outputs that data in a data frame along with the two stocks selected for each.
+```{r}
+stock_correlation = data.frame(Correlation = numeric(), Stock1 = character(), Stock2 = character(), index1 = numeric(), index2 = numeric(), stringsAsFactors = FALSE) #data frame setup
+
+files = list.files(path = "./data/", pattern = '\\.csv$', full.names = TRUE) #gets a list of all files in the data path
+stock1 = read.csv(files[1])
+print(stock1[1,]) #Shows row 1 of the data we use
+
+num_stocks = 100 #Selects how many stocks used, goes by alphabetical order
+iterator = 1
+
+combine_two_stocks = function(a, b, stockNames = c(deparse(substitute(a)), deparse(substitute(b)))) { #Finds common dates where both stacks were traded 
+    rr = range(intersect(a$Date, b$Date))
+    a.sub = a[a$Date >= rr[1] & a$Date <= rr[2],]
+    b.sub = b[b$Date >= rr[1] & b$Date <= rr[2],]
+    structure(data.frame(a.sub$Date, a.sub$Adj.Close, b.sub$Adj.Close), names = c("Date", stockNames))
+}
+for (i in 1: num_stocks) {
+    for (j in 1: num_stocks) {
+        files = list.files(path = "./data/", pattern = '\\.csv$', full.names = TRUE)
+        stock1 = read.csv(files[i])
+        stock2 = read.csv(files[j])
+
+        overlap = combine_two_stocks(stock1, stock2)
+        
+        if (files[i] != files[j]) { #Prevents the code from having it compare stocks to itself 
+            name1 = substring(files[i], 8)
+            name1 = substr(name1, 1, nchar(name1) - 4) #Stock name without the folder name and file extension
+            name2 = substring(files[j], 8)
+            name2 = substr(name2, 1, nchar(name2) - 4) #Stock name without the folder name and file extension
+            
+            stock_correlation[iterator, ] = list(cor(overlap$stock1, overlap$stock2), name1, name2, i, j)
+            
+            iterator = iterator + 1
+        }
+    }
+}
+
+ordered_correlation = stock_correlation[order(stock_correlation$Correlation, decreasing = TRUE), ]
+reverse_ordered_correlation = stock_correlation[order(stock_correlation$Correlation, decreasing = FALSE), ]
+
+unique_ordered_correlation <-ordered_correlation[!duplicated(ordered_correlation[, c("Correlation")]), ]
+reverse_unique_ordered_correlation <-reverse_ordered_correlation[!duplicated(reverse_ordered_correlation[, c("Correlation")]), ]
+
+print(head(unique_ordered_correlation)) #Prints the 6 highest correlated stocks
+print(head(reverse_unique_ordered_correlation)) #Prints the 6 lowest correlated stocks
+```
+
+
+
+#Graph Chunk
+This chunk shows three things the graph of the ratio of the differences between two stocks, the graph of the return vs the standard deviation with indicators of the current and optimal standard deviation, and the return. This figures out when to buy and sell based off a regression model it builds off of the inputted stock data using the caret package. This is more of a visual demonstration of what is happening, more will be explained in the next chunk.
+```{r}
+files = list.files(path = "./data/", pattern = '\\.csv$', full.names = TRUE)
+stock1num = 1
+stock2num = 4
+
+stock1 = read.csv(files[stock1num]) #A
+stock2 = read.csv(files[stock2num]) #AAPL
+
+name1 = substring(files[stock1num], 8)
+name1 = substr(name1, 1, nchar(name1) - 4) #Stock name without the folder name and file extension
+name2 = substring(files[stock2num], 8)
+name2 = substr(name2, 1, nchar(name2) - 4) #Stock name without the folder name and file extension
+
+combine_two_stocks = function(a, b, stockNames = c(deparse(substitute(a)), deparse(substitute(b)))) {#Finds common dates where both stacks were traded 
+    rr = range(intersect(a$Date, b$Date))
+    a.sub = a[a$Date >= rr[1] & a$Date <= rr[2], ]
+    b.sub = b[b$Date >= rr[1] & b$Date <= rr[2], ]
+    structure(data.frame(a.sub$Date, a.sub$Adj.Close, b.sub$Adj.Close), names = c("Date", stockNames))
+}
+
+overlap = combine_two_stocks(stock1, stock2)
+r = overlap$stock1 / overlap$stock2
+k = .85 #Standard deviation
+
+plot_ratio = function(r, k = 1, date = seq(along = r), ...) { #function that plots the ratio of correlation between stock1 and stock2
+    plot(date, r, type = "l", main = paste("Ratio of pairs", name1, "and", name2, sep = " "),...)
+    abline(h = c(mean(r), mean(r) + k * sd(r), mean(r) - k * sd(r)), col = c("darkgreen", rep("red", 2 * length(k))), lty = "dashed")
+}
+overlap$Date = as.Date(overlap$Date, format = c("%Y-%m-%d")) #Converts overlap$Date into a R readable format
+
+find_next_position = function(ratio, startDay = 1, k = 1, m = mean(ratio), s = sd(ratio)) { #function that finds which stock to find which stock to buy or sell
+    up = m + k * s
+    down = m - k * s
+    if (startDay > 1)
+        ratio = ratio[-(1: (startDay - 1))]
+    is_extreme = ratio >= up | ratio <= down
+    if (!any(is_extreme))
+        return (integer())
+    start = which(is_extreme)[1]
+    back_to_normal = if (ratio[start] > up)
+            ratio[-(1: start)] <= m
+    else
+        ratio[-(1: start)] >= m
+    end = if (any(back_to_normal))
+            which(back_to_normal)[1] + start
+    else
+        length(ratio)
+    c(start, end) + startDay - 1
+}
+
+show_position = function(days, ratios, radius = 50) { #Draws circles on graph where the ratio is optimal to buy or sell
+    symbols(days, ratios, circles = rep(radius, 2), fg = c("darkgreen", "red"), add = TRUE, inches = FALSE)
+}
+
+get_positions = function(ratio, k = 1, m = mean(ratio), s = sd(ratio)) { #Finds Where the ratio is optimal to buy or sell
+    when = list()
+    cur = 1
+    while (cur < length(ratio)) {
+        temp = find_next_position(ratio, cur, k, m, s)
+        if (length(temp) == 0) #quit
+        break
+        when[[length(when) + 1]] = temp
+        if (is.na(temp[2]) || temp[2] == length(ratio))
+            break
+        cur = temp[2]
+    }
+    when
+}
+pos = get_positions(r, k) #Finds Where the ratio is optimal to buy or sell
+plot_ratio(r, k, overlap$Date, xlab = "Date", ylab = "Ratio") #function that plots the ratio of correlation between stock1 and stock2
+invisible(lapply(pos, function(p) show_position(overlap$Date[p], r[p])))
+
+position_profit = function(pos, stock_price_1, stock_price_2, ratio_mean = mean(stock_price_1 / stock_price_2), p = .001, by_stock = FALSE) { #Finds the profit from the purchases
+    if (is.list(pos)) {
+        ans = sapply(pos, position_profit,
+            stock_price_1, stock_price_2, ratio_mean, p, by_stock)
+        if (by_stock)
+            rownames(ans) = c("A", "B", "commission")
+        return (ans)
+    }
+
+    price_stock1 = stock_price_1[pos] #Gets prices
+    price_stock2 = stock_price_2[pos] #Gets prices
+    
+    units_of_stock1 = 1 / price_stock1[1] #Buying dollars_per_trade$ worth of stock
+    units_of_stock2 = 1 / price_stock2[1] #Buying dollars_per_trade$ worth of stock
+    
+    amount = c(units_of_stock1 * price_stock1[2], units_of_stock2 * price_stock2[2])
+    
+    sell_what = if (price_stock1[1] / price_stock2[1] > ratio_mean) "A" #stock that is being sold
+    else "B"
+    profit = if (sell_what == "A") #Calculates profit
+            c((1 - amount[1]), (amount[2] - 1), -p * sum(amount))
+    else
+        c((1 - amount[2]), (amount[1] - 1), -p * sum(amount))
+    if (by_stock)
+        profit
+    else
+        sum(profit)
+}
+
+model_iterator = 1:floor(nrow(overlap) / 2)
+train = overlap[model_iterator, ]
+test = overlap[-model_iterator, ]
+
+r.train = train$stock1 / train$stock2 #Setting up the regression model
+r.test = test$stock1 / test$stock2 #Setting up the regression model
+train.period = seq(min(overlap$Date), by = "5 years", length = 2)#Creates a regression model 
+
+stock1.test = subset(stock1, !(Date >= train.period[1] & Date < train.period[2])) $Adj.Close #Runs regression model
+stock2.test = subset(stock2, !(Date >= train.period[1] & Date < train.period[2])) $Adj.Close #Runs regression model
+r.test = stock1.test / stock2.test
+
+k.max = max((r.train - mean(r.train)) / sd(r.train))
+k.min = min((abs(r.train - mean(r.train)) / sd(r.train)))
+ks = seq(k.min, k.max, length = 1000)
+m = mean(r.train)
+
+profits = sapply(ks, function(k) { #Creates a list of profits per trade
+    pos = get_positions(r.train, k)
+    sum(position_profit(pos, train$stock1, train$stock2, mean(r.train)))
+})
+
+plot(ks, profits * 100, type = "l", xlab = "k", ylab = "Percent return", main = paste("Profits tested at each std deviation for pairs", name1, "and", name2, sep = " "))
+abline(v = k, col = "red")
+
+k.star = mean(ks[profits == max(profits)])
+abline(v = k.star, col = 'green')
+legend("topleft", legend = c("Chosen std deviation", "Optimal std deviation", "Graph"), fill = c("red", "green", "black"), cex = .60)
+
+print(sprintf("%f$ return in %i trades at a %.2f percent profit", sum(profits), length(profits),sum(profits / 1000) * 100))
+```
+
+
+#Output Chunk
+This chunk outputs the return of the top x in this case 10, most and least correlated pairs based on the amount of days, number of stocks, and dollars per trade inputted. This is very similar to the last chunk but instead it's ran and iterated as a function and only gives the outputs. The outputs show that the positively correlated stocks have a much greater return than the negatively correlated ones.
+```{r}
+trades <- function(days = 1000, num_stocks = 10, dollars_per_trade = 1, index1, index2) {
+    files = list.files(path = "./data/", pattern = '\\.csv$', full.names = TRUE)
+
+    for (i in 1: num_stocks) {
+        stock1 = read.csv(files[index1[i]]) #Uses the index of the data table instead of the file list
+        stock2 = read.csv(files[index2[i]]) #Uses the index of the data table instead of the file list
+        
+        name1 = substring(files[index1[i]], 8)
+        name1 = substr(name1, 1, nchar(name1) - 4) #Stock name without the folder name and file extension
+        name2 = substring(files[index2[i]], 8)
+        name2 = substr(name2, 1, nchar(name2) - 4) #Stock name without the folder name and file extension
+
+        combine_two_stocks = function(a, b, stockNames = c(deparse(substitute(a)), deparse(substitute(b)))) { #Finds common dates where both stacks were traded 
+            rr = range(intersect(a$Date, b$Date))
+            a.sub = a[a$Date >= rr[1] & a$Date <= rr[2], ]
+            b.sub = b[b$Date >= rr[1] & b$Date <= rr[2], ]
+            structure(data.frame(a.sub$Date, a.sub$Adj.Close, b.sub$Adj.Close), names = c("Date", stockNames))
+        }
+        
+        overlap = combine_two_stocks(stock1, stock2)
+        r = overlap$stock1 / overlap$stock2
+        k = .85 #Standard deviation
+
+        overlap$Date = as.Date(overlap$Date, format = c("%Y-%m-%d")) #Converts overlap$Date into a R readable format
+
+        find_next_position = function(ratio, startDay = 1, k = 1, m = mean(ratio), s = sd(ratio)) { #function that finds which stock to find which stock to buy or sell
+            up = m + k * s
+            down = m - k * s
+            if (startDay > 1)
+                ratio = ratio[-(1: (startDay - 1))]
+            is_extreme = ratio >= up | ratio <= down
+            if (!any(is_extreme))
+                return (integer())
+            start = which(is_extreme)[1]
+            back_to_normal = if (ratio[start] > up)
+                    ratio[-(1: start)] <= m
+            else
+                ratio[-(1: start)] >= m
+            end = if (any(back_to_normal))
+                    which(back_to_normal)[1] + start
+            else
+                length(ratio)
+            c(start, end) + startDay - 1
+        }
+
+
+        get_positions = function(ratio, k = 1, m = mean(ratio), s = sd(ratio)) { #Finds Where the ratio is optimal to buy or sell
+            when = list()
+            cur = 1
+            while (cur < length(ratio)) {
+                temp = find_next_position(ratio, cur, k, m, s)
+                if (length(temp) == 0) #quit
+                break
+                when[[length(when) + 1]] = temp
+                if (is.na(temp[2]) || temp[2] == length(ratio))
+                    break
+                cur = temp[2]
+            }
+            when
+        }
+        
+        pos = get_positions(r, k) #Finds Where the ratio is optimal to buy or sell
+
+        position_profit = function(pos, stock_price_1, stock_price_2, ratio_mean = mean(stock_price_1 / stock_price_2), p = .001, by_stock = FALSE) { #Finds the profit from the purchases
+            if (is.list(pos)) {
+                ans = sapply(pos, position_profit,
+                    stock_price_1, stock_price_2, ratio_mean, p, by_stock)
+                if (by_stock)
+                    rownames(ans) = c("A", "B", "commission")
+                return (ans)
+            }
+
+            price_stock1 = stock_price_1[pos] #Gets prices
+            price_stock2 = stock_price_2[pos] #Gets prices
+
+            units_of_stock1 = dollars_per_trade / price_stock1[1] #Buying dollars_per_trade$ worth of stock
+            units_of_stock2 = dollars_per_trade / price_stock2[1] #Buying dollars_per_trade$ worth of stock
+
+            amount = c(units_of_stock1 * price_stock1[2], units_of_stock2 * price_stock2[2])
+            sell_what = if (price_stock1[1] / price_stock2[1] > ratio_mean) "A" #stock that is being sold
+            else "B"
+            profit = if (sell_what == "A")
+                    c((1 - amount[1]), (amount[2] - 1), -p * sum(amount))
+            else
+                c((1 - amount[2]), (amount[1] - 1), -p * sum(amount))
+            if (by_stock)
+                profit
+            else
+                sum(profit)
+        }
+
+        model_iterator = 1: floor(nrow(overlap) / 2)
+        train = overlap[model_iterator, ]
+        test = overlap[-model_iterator, ]
+
+        r.train = train$stock1 / train$stock2
+        r.test = test$stock1 / test$stock2
+        train.period = seq(min(overlap$Date), by = "5 years", length = 2) #Creates regression model
+
+        stock1.test = subset(stock1, !(Date >= train.period[1] & Date < train.period[2])) $Adj.Close #Runs regression model
+        stock2.test = subset(stock2, !(Date >= train.period[1] & Date < train.period[2])) $Adj.Close #Runs regression model
+        r.test = stock1.test / stock2.test
+
+        k.max = max((r.train - mean(r.train)) / sd(r.train))
+        k.min = min((abs(r.train - mean(r.train)) / sd(r.train)))
+
+        ks = seq(k.min, k.max, length = days)
+        m = mean(r.train)
+
+        profits = sapply(ks, function(k) { #Creates a list of profits per trade
+            pos = get_positions(r.train, k)
+            sum(position_profit(pos, train$stock1, train$stock2, mean(r.train)))
+        })
+
+        cat(sprintf("This returned %.2f dollars in %i days between %s and %s which is an %.2f percent profit using %i dollars per trade\n", sum(profits), length(profits), name1, name2, (sum(profits / days) * 100),dollars_per_trade))
+    }
+}
+
+
+print("Positively Correlated")
+trades(1000, 10, 1, unique_ordered_correlation$index1, unique_ordered_correlation$index2)
+print("Negatively Correlated")
+trades(1000, 10, 1, reverse_unique_ordered_correlation$index1, reverse_unique_ordered_correlation$index2)
+
+
+```
