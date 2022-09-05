@@ -1,3 +1,4 @@
+
 # Stock-Pair-Trading-Final
 # README
 ## Installation
@@ -8,10 +9,10 @@
 
 ## Goal of The Project
 - The aim of this project is to scrape data from Yahoo Finance and use that data to make preditions on stocks to buy and sell with pair trading
-- 
 
 
-## Sample Output
+## Sample Output<sub><sup> From Knitted-PDF.pdf</sup></sub>
+
 
 The 6 highest correlated stocks
 ```
@@ -40,4 +41,4 @@ This returned 35.61 dollars in 1000 days between AAL and CLX which is an 3.56 pe
 This returned 460.72 dollars in 1000 days between AMZN and CCL which is an 46.07 percent profit using 1 dollars per trade
 ```
 
-Note data taken 4/28/22
+Note: Data taken 4/28/22
