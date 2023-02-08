@@ -8,7 +8,7 @@
 
 
 ## Goal of The Project
-- The aim of this project is to scrape data from Yahoo Finance and use that data to make preditions on stocks to buy and sell with pair trading
+- The aim of this project is to scrape data from Yahoo Finance and use that data to make predictions on stocks to buy and sell with pair trading
 
 
 ## Sample Output<sub><sup> From Knitted-PDF.pdf</sup></sub>
